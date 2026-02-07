@@ -3,7 +3,17 @@ import { median, abs } from "../utils/math";
 import { emptySummary, addMove } from "./summary";
 import { stableStr, tablesSorted } from "../utils/sort";
 
-export function autoPodApply(state: AppState): { nextState: AppState; summary: AutoPodSummary } {
+export type AutoPodMode = "nearest_bottom_up" | "random";
+
+export function autoPodApply(
+  state: AppState,
+  opts: { mode?: AutoPodMode } = {}
+): { nextState: AppState; summary: AutoPodSummary } {
+  const mode = opts.mode ?? "nearest_bottom_up";
+  return mode === "random" ? autoPodRandom(state) : autoPodNearestBottomUp(state);
+}
+
+function autoPodNearestBottomUp(state: AppState): { nextState: AppState; summary: AutoPodSummary } {
   const playersById = new Map(state.players.map(p => [p.playerId, p]));
   const groupsById = new Map(state.groups.map(g => [g.groupId, g]));
   const catRankById = new Map(state.categories.map(c => [c.categoryId, c.rank]));
@@ -82,18 +92,24 @@ export function autoPodApply(state: AppState): { nextState: AppState; summary: A
       .map(id => groupsById.get(id)!)
       .filter(Boolean)
       .sort((a, b) => {
+        const ra = groupRank(a);
+        const rb = groupRank(b);
         const sa = a.playerIds.length;
         const sb = b.playerIds.length;
         const na = groupName(a, playersById);
         const nb = groupName(b, playersById);
-        return (sb - sa) || stableStr(na, nb) || stableStr(a.groupId, b.groupId);
+        return (ra - rb) || (sb - sa) || stableStr(na, nb) || stableStr(a.groupId, b.groupId);
       });
 
   const singlesStable = () =>
     [...availablePlayerIds]
       .map(id => playersById.get(id)!)
       .filter(Boolean)
-      .sort((a, b) => stableStr(a.displayName, b.displayName) || (a.createdIndex - b.createdIndex) || stableStr(a.playerId, b.playerId));
+      .sort((a, b) => {
+        const ra = playerRank(a);
+        const rb = playerRank(b);
+        return (ra - rb) || stableStr(a.displayName, b.displayName) || (a.createdIndex - b.createdIndex) || stableStr(a.playerId, b.playerId);
+      });
 
   // Step B: exact-fit groups / groups of 4 first
   for (const t of tables) {
@@ -105,7 +121,7 @@ export function autoPodApply(state: AppState): { nextState: AppState; summary: A
       .filter(g => g.playerIds.length === open || (g.playerIds.length === 4 && t.seats.every(s => !s) && open >= 4))
       .map(g => ({
         g,
-        dist: target === null ? 0 : abs(groupRank(g) - target)
+        dist: target === null ? groupRank(g) : abs(groupRank(g) - target)
       }))
       .sort((a, b) => {
         return (a.dist - b.dist)
@@ -155,7 +171,7 @@ export function autoPodApply(state: AppState): { nextState: AppState; summary: A
     const target = tableTargetRank(t);
     const candidates = groupsStable()
       .filter(g => g.playerIds.length === 3 && g.playerIds.length <= open)
-      .map(g => ({ g, dist: target === null ? 0 : abs(groupRank(g) - target) }))
+      .map(g => ({ g, dist: target === null ? groupRank(g) : abs(groupRank(g) - target) }))
       .sort((a, b) =>
         (a.dist - b.dist)
         || stableStr(groupName(a.g, playersById), groupName(b.g, playersById))
@@ -185,11 +201,11 @@ export function autoPodApply(state: AppState): { nextState: AppState; summary: A
       const cands: Cand[] = [];
 
       for (const p of singles) {
-        const dist = target === null ? 0 : abs(playerRank(p) - target);
+        const dist = target === null ? playerRank(p) : abs(playerRank(p) - target);
         cands.push({ kind: "single", player: p, dist, waste: open - 1 });
       }
       for (const g of groupFits) {
-        const dist = target === null ? 0 : abs(groupRank(g) - target);
+        const dist = target === null ? groupRank(g) : abs(groupRank(g) - target);
         const waste = open - g.playerIds.length;
         cands.push({ kind: "group", group: g, dist, waste });
       }
@@ -240,6 +256,102 @@ export function autoPodApply(state: AppState): { nextState: AppState; summary: A
   return { nextState, summary };
 }
 
+function autoPodRandom(state: AppState): { nextState: AppState; summary: AutoPodSummary } {
+  const playersById = new Map(state.players.map(p => [p.playerId, p]));
+  const groupsById = new Map(state.groups.map(g => [g.groupId, g]));
+
+  const seated = computeSeatedPlayerIds(state.tables);
+  const groupContainsSeated = new Set<string>();
+  for (const g of state.groups) {
+    if (g.playerIds.some(pid => seated.has(pid))) groupContainsSeated.add(g.groupId);
+  }
+
+  const playerToGroup = buildPlayerToGroup(state.groups);
+
+  // Eligible = unseated singles not in a "locked" (contains seated) group + groups with no seated members.
+  const eligibleSingles: Player[] = state.players
+    .filter(p => !seated.has(p.playerId))
+    .filter(p => {
+      const gid = playerToGroup.get(p.playerId);
+      if (!gid) return true;
+      return !groupContainsSeated.has(gid);
+    });
+
+  const eligibleGroups: Group[] = state.groups
+    .filter(g => g.playerIds.length > 0)
+    .filter(g => !groupContainsSeated.has(g.groupId))
+    .filter(g => g.playerIds.every(pid => !seated.has(pid)));
+
+  const availablePlayerIds = new Set(eligibleSingles.map(p => p.playerId));
+  const availableGroupIds = new Set(eligibleGroups.map(g => g.groupId));
+
+  const tables = tablesSorted(state.tables).map(t => ({ ...t, seats: [...t.seats] }));
+  const summary = emptySummary();
+
+  const openSeatIndexes = (t: Table) => {
+    const idxs: number[] = [];
+    for (let i = 0; i < t.seats.length; i++) if (!t.seats[i]) idxs.push(i);
+    return idxs;
+  };
+
+  const seatPlayersIntoTable = (t: Table, playerIds: string[]) => {
+    const open = openSeatIndexes(t);
+    const seatedNow: string[] = [];
+    for (let i = 0; i < playerIds.length; i++) {
+      const idx = open[i];
+      if (idx === undefined) break;
+      t.seats[idx] = playerIds[i];
+      seatedNow.push(playerIds[i]);
+    }
+    addMove(summary, t.tableId, seatedNow);
+  };
+
+  const removeGroup = (gid: string) => {
+    const g = groupsById.get(gid);
+    if (!g) return;
+    availableGroupIds.delete(gid);
+    for (const pid of g.playerIds) availablePlayerIds.delete(pid);
+  };
+
+  // Shuffle tables for randomness.
+  const tableOrder = shuffle([...tables]);
+
+  // 1) Seat groups in random order where they fit.
+  const groupOrder = shuffle([...availableGroupIds].map(id => groupsById.get(id)!).filter(Boolean));
+  for (const g of groupOrder) {
+    if (!availableGroupIds.has(g.groupId)) continue;
+    const fits = tableOrder.filter(t => openSeatIndexes(t).length >= g.playerIds.length);
+    if (fits.length === 0) continue;
+    const t = fits[Math.floor(Math.random() * fits.length)];
+    seatPlayersIntoTable(t, [...g.playerIds]);
+    removeGroup(g.groupId);
+  }
+
+  // 2) Seat remaining singles randomly into remaining open seats.
+  const remainingPlayers = shuffle([...availablePlayerIds].map(id => playersById.get(id)!).filter(Boolean));
+  let pIndex = 0;
+  for (const t of tableOrder) {
+    const open = openSeatIndexes(t);
+    if (open.length === 0) continue;
+    const toSeat: string[] = [];
+    for (let i = 0; i < open.length && pIndex < remainingPlayers.length; i++) {
+      toSeat.push(remainingPlayers[pIndex].playerId);
+      pIndex += 1;
+    }
+    if (toSeat.length) seatPlayersIntoTable(t, toSeat);
+  }
+
+  const nextState: AppState = {
+    ...state,
+    tables: state.tables.map(orig => {
+      const updated = tables.find(t => t.tableId === orig.tableId);
+      return updated ? { ...orig, seats: [...updated.seats], seatCount: updated.seatCount } : orig;
+    })
+  };
+
+  return { nextState, summary };
+}
+
 function computeSeatedPlayerIds(tables: Table[]) {
   const set = new Set<string>();
   for (const t of tables) for (const s of t.seats) if (s) set.add(s);
@@ -257,4 +369,15 @@ function groupName(g: Group, playersById: Map<string, Player>) {
   if (label) return label;
   const names = g.playerIds.map(pid => playersById.get(pid)?.displayName || "").filter(Boolean).sort(stableStr);
   return names.join(" + ") || "Group";
+}
+
+function shuffle<T>(arr: T[]): T[] {
+  // Fisher-Yates
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = arr[i];
+    arr[i] = arr[j];
+    arr[j] = t;
+  }
+  return arr;
 }

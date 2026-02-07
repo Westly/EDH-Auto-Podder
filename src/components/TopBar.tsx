@@ -3,8 +3,20 @@ import { useAppState } from "../state/StateProvider";
 import { downloadText } from "../utils/download";
 import { zAppState } from "../state/schema";
 import { toast } from "./Toasts";
+import { printPods } from "../utils/print";
+import type { AutoPodMode } from "../autopod/autopod";
 
-export function TopBar({ onAutoPod, seatedCount }: { onAutoPod: () => void; seatedCount: number }) {
+export function TopBar({
+  onAutoPod,
+  seatedCount,
+  autoMode,
+  onAutoModeChange
+}: {
+  onAutoPod: () => void;
+  seatedCount: number;
+  autoMode: AutoPodMode;
+  onAutoModeChange: (mode: AutoPodMode) => void;
+}) {
   const { state, dispatch, canUndo, canRedo } = useAppState();
   const [addCount, setAddCount] = useState("1");
 
@@ -40,6 +52,15 @@ export function TopBar({ onAutoPod, seatedCount }: { onAutoPod: () => void; seat
       <h3>FNM Podder</h3>
       <div className="btnRow">
         <button className="btn btnPrimary" onClick={onAutoPod}>Auto</button>
+        <select
+          value={autoMode}
+          onChange={e => onAutoModeChange(e.target.value as AutoPodMode)}
+          title="Auto pod mode"
+          aria-label="Auto pod mode"
+        >
+          <option value="nearest_bottom_up">Nearest (bottom-up)</option>
+          <option value="random">Random</option>
+        </select>
 
         <input
           className="input"
@@ -67,6 +88,8 @@ export function TopBar({ onAutoPod, seatedCount }: { onAutoPod: () => void; seat
 
         <button className="btn" onClick={exportJson}>Export</button>
         <button className="btn" onClick={importJson}>Import</button>
+
+        <button className="btn" onClick={() => printPods(state)} title="Print table assignments">Print</button>
 
         <span className="kbdHint">Seated: {seatedCount}</span>
       </div>

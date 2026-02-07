@@ -1,14 +1,13 @@
 # FNM Podder (MTG Commander Pod Organizer)
 
-Static SPA (React + TypeScript + Vite) designed for quick in-store Commander pod organization.
+Static SPA (React + TypeScript + Vite) designed for quick local game store Commander pod organization. Handles groups; pairs; and single players. Include the ability to classify players and pods with nearest peers to keep game preference aligned. 
 
 ## Requirements satisfied
-- Static SPA deployable to Cloudflare Pages (no backend)
-- Persists all state to localStorage key: "fnm_podder_state_v1"
+- Static SPA deployable to Cloudflare Pages
+- Persists all state to localStorage 
 - Includes Cloudflare Pages SPA redirect: public/_redirects
-- Deterministic Auto Pod behavior (stable sorting, no random seat assignments)
+- Deterministic Auto Pod behavior
 - Undo/Redo (20 steps), Export/Import with schema validation
-- Drag & drop via dnd-kit + accessible fallback actions
 
 ## Run
 ```bash

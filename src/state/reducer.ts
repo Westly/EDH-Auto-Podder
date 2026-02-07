@@ -108,6 +108,19 @@ export function appReducer(state: AppState, action: Action): AppState {
     }
 
     case "ADD_PLAYER": {
+      const normalized = normalizeName(action.displayName);
+      if (!normalized) {
+        toast("Enter a name.");
+        return state;
+      }
+
+      // Prevent duplicate player names (case-insensitive, trimmed).
+      const existing = state.players.find(p => normalizeName(p.displayName) === normalized);
+      if (existing) {
+        toast("Duplicate name not allowed.");
+        return state;
+      }
+
       const ci = state.counters.createdIndex + 1;
       const next: Player = {
         playerId: uuid(),
@@ -304,4 +317,8 @@ function uniq(arr: string[]) {
   const out: string[] = [];
   for (const x of arr) if (!s.has(x)) { s.add(x); out.push(x); }
   return out;
+}
+
+function normalizeName(name: string): string {
+  return (name ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase();
 }
