@@ -278,12 +278,22 @@ select option:disabled{
 
 .toastHost{
   position: fixed;
-  right: 10px;
-  bottom: 10px;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  right: auto;
+  bottom: auto;
+
   display:flex;
   flex-direction:column;
   gap: 8px;
   z-index: 999;
+  align-items: center;
+}
+.toastError{
+  border-color: rgba(239, 68, 68, .75);          /* red border */
+  background: rgba(239, 68, 68, .18);            /* red tint */
+  color: #fff;
 }
 .toast{
   border:1px solid var(--border);

@@ -50,7 +50,7 @@ export function PlayerPool({ onOpenActions }: { onOpenActions: (kind: "player" |
 
     const normalized = name.replace(/\s+/g, " ").toLocaleLowerCase();
     const exists = state.players.some(p => p.displayName.trim().replace(/\s+/g, " ").toLocaleLowerCase() === normalized);
-    if (exists) return toast("Duplicate name not allowed.");
+    if (exists) return toast("Duplicate name not allowed.", { kind: "error" });
 
     dispatch({ type: "ADD_PLAYER", displayName: name, categoryId: newCat });
     setNewName("");
