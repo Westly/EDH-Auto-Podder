@@ -25,7 +25,7 @@ import {
   parsePlayerDropId
 } from "../dnd/dndUtils";
 import { toast } from "../components/Toasts";
-import { autoPodApply, type AutoPodMode } from "../autopod/autopod";
+import { autoPodApply } from "../autopod/autopod";
 import { PlayerChip } from "../components/chips";
 
 export default function Home() {
@@ -36,8 +36,6 @@ export default function Home() {
 
   const [actionModalOpen, setActionModalOpen] = useState(false);
   const [actionEntityId, setActionEntityId] = useState<{ kind: "player" | "group"; id: string } | null>(null);
-
-  const [autoMode, setAutoMode] = useState<AutoPodMode>("nearest_bottom_up");
 
   const seatedPlayerIds = useMemo(() => {
     const set = new Set<string>();
@@ -117,7 +115,7 @@ export default function Home() {
   };
 
   const runAutoPod = () => {
-    const result = autoPodApply(state, { mode: autoMode });
+    const result = autoPodApply(state);
     if (result.summary.moves.length === 0) return toast("Auto: no moves.");
     dispatch({ type: "LOAD_STATE_SNAPSHOT", snapshot: result.nextState });
     dispatch({ type: "SET_LAST_AUTOPOD_SUMMARY", summary: result.summary });
@@ -126,7 +124,7 @@ export default function Home() {
 
   return (
     <div className="homeLayout">
-      <TopBar onAutoPod={runAutoPod} seatedCount={seatedPlayerIds.size} autoMode={autoMode} onAutoModeChange={setAutoMode} />
+      <TopBar onAutoPod={runAutoPod} seatedCount={seatedPlayerIds.size} />
 
       <DndContext
         sensors={sensors}

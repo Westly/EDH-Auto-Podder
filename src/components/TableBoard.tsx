@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { useAppState } from "../state/StateProvider";
 import { tablesSorted } from "../utils/sort";
@@ -7,14 +7,53 @@ import { PlayerChip } from "./chips";
 import { toast } from "./Toasts";
 
 export function TableBoard() {
-  const { state } = useAppState();
+  const { state, dispatch } = useAppState();
   const tables = useMemo(() => tablesSorted(state.tables), [state.tables]);
+  const [addCount, setAddCount] = useState("1");
+
+  const addTables = () => {
+    const n = Number(addCount || "1");
+    dispatch({ type: "ADD_TABLES", count: n });
+    toast(`Added ${Math.max(1, Math.min(50, Math.floor(n || 1)))} table(s).`);
+  };
+
+  const unseatAll = () => {
+    const ok = window.confirm("Unseat all players from all tables?");
+    if (!ok) return;
+    dispatch({ type: "UNSEAT_ALL" });
+    toast("All players unseated.");
+  };
 
   return (
     <>
       <div className="sectionHeader">
         <h3>Tables</h3>
-        <div className="kbdHint">Drag players or groups into seats</div>
+        <div className="btnRow" style={{ alignItems: "center" }}>
+          <label className="kbdHint" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span>Add new tables:</span>
+            <input
+              className="input"
+              style={{ width: 64, textAlign: "center" }}
+              value={addCount}
+              onChange={e => setAddCount(e.target.value.replace(/[^0-9]/g, ""))}
+              onKeyDown={e => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addTables();
+                }
+              }}
+              aria-label="Number of tables to add"
+              title="Number of tables"
+            />
+          </label>
+          <button className="btn iconBtn" onClick={addTables} title="Add tables" aria-label="Add tables">
+            +
+          </button>
+          <button className="btn" onClick={unseatAll} title="Unseat all players">
+            Unseat all
+          </button>
+          <div className="kbdHint" style={{ marginLeft: 6 }}>Drag players or groups into seats</div>
+        </div>
       </div>
 
       <div className="gridTables">

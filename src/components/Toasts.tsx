@@ -11,14 +11,13 @@ export function toast(text: string, opts?: { kind?: ToastKind }) {
   const msg: ToastMsg = {
     id: String(Date.now()) + ":" + String(toastCounter),
     text,
-    kind: opts?.kind ?? "info",
+    kind: opts?.kind ?? "info"
   };
   for (const l of listeners) l(msg);
 }
 
 export function ToastHost() {
   const [items, setItems] = useState<ToastMsg[]>([]);
-
   useEffect(() => {
     const on = (msg: ToastMsg) => {
       setItems(prev => [msg, ...prev].slice(0, 5));
@@ -26,7 +25,6 @@ export function ToastHost() {
         setItems(prev => prev.filter(x => x.id !== msg.id));
       }, 2200);
     };
-
     listeners.push(on);
     return () => {
       listeners = listeners.filter(l => l !== on);

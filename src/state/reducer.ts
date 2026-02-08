@@ -10,6 +10,7 @@ export type Action =
   | { type: "ADD_SEAT"; tableId: string }
   | { type: "REMOVE_SEAT"; tableId: string; mode: "BLOCK" | "UNSEAT_EXCESS" }
   | { type: "UNSEAT_PLAYER"; playerId: string }
+  | { type: "UNSEAT_ALL" }
   | { type: "CLEAR_SEAT"; tableId: string; seatIndex: number }
   | { type: "ASSIGN_PLAYER_TO_SEAT"; tableId: string; seatIndex: number; playerId: string }
   | { type: "SEAT_GROUP_ON_TABLE"; tableId: string; groupId: string }
@@ -107,24 +108,29 @@ export function appReducer(state: AppState, action: Action): AppState {
       return { ...state, tables };
     }
 
+    case "UNSEAT_ALL": {
+      const tables = state.tables.map(t => ({ ...t, seats: t.seats.map(() => null) }));
+      return { ...state, tables };
+    }
+
     case "ADD_PLAYER": {
-      const normalized = normalizeName(action.displayName);
-      if (!normalized) {
-        toast("Enter a name.");
+      const name = (action.displayName ?? "").trim();
+      if (!name) {
+        toast("Enter a name.", { kind: "error" });
         return state;
       }
 
-      // Prevent duplicate player names (case-insensitive, trimmed).
-      const existing = state.players.find(p => normalizeName(p.displayName) === normalized);
-      if (existing) {
-        toast("Duplicate name not allowed.");
+      const norm = normalizeName(name);
+      const dup = state.players.some(p => normalizeName(p.displayName) === norm);
+      if (dup) {
+        toast("Duplicate name not allowed.", { kind: "error" });
         return state;
       }
 
       const ci = state.counters.createdIndex + 1;
       const next: Player = {
         playerId: uuid(),
-        displayName: action.displayName.trim() || "Player",
+        displayName: name,
         categoryId: action.categoryId,
         createdIndex: ci
       };
@@ -320,5 +326,8 @@ function uniq(arr: string[]) {
 }
 
 function normalizeName(name: string): string {
-  return (name ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  return String(name ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 }

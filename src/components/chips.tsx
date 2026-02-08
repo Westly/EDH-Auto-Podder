@@ -50,7 +50,7 @@ export function PlayerChip({
       title={name}
     >
       <span className="chipBadge" style={{ background: color }} />
-      <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 150 }}>{name}</span>
+      <span className="chipName">{name}</span>
       {sub ? <span className="chipSub">{sub}</span> : null}
     </div>
   );

@@ -1,24 +1,12 @@
-import React, { useState } from "react";
+import React from "react";
 import { useAppState } from "../state/StateProvider";
 import { downloadText } from "../utils/download";
 import { zAppState } from "../state/schema";
 import { toast } from "./Toasts";
-import { printPods } from "../utils/print";
-import type { AutoPodMode } from "../autopod/autopod";
+import { openPrintView } from "../utils/print";
 
-export function TopBar({
-  onAutoPod,
-  seatedCount,
-  autoMode,
-  onAutoModeChange
-}: {
-  onAutoPod: () => void;
-  seatedCount: number;
-  autoMode: AutoPodMode;
-  onAutoModeChange: (mode: AutoPodMode) => void;
-}) {
+export function TopBar({ onAutoPod, seatedCount }: { onAutoPod: () => void; seatedCount: number }) {
   const { state, dispatch, canUndo, canRedo } = useAppState();
-  const [addCount, setAddCount] = useState("1");
 
   const exportJson = () => {
     const file = `fnm_podder_export_${new Date().toISOString().slice(0, 10)}.json`;
@@ -52,35 +40,9 @@ export function TopBar({
       <h3>FNM Podder</h3>
       <div className="btnRow">
         <button className="btn btnPrimary" onClick={onAutoPod}>Auto</button>
-        <select
-          value={autoMode}
-          onChange={e => onAutoModeChange(e.target.value as AutoPodMode)}
-          title="Auto pod mode"
-          aria-label="Auto pod mode"
-        >
-          <option value="nearest_bottom_up">Nearest (bottom-up)</option>
-          <option value="random">Random</option>
-        </select>
 
-        <input
-          className="input"
-          style={{ width: 54, textAlign: "center" }}
-          value={addCount}
-          onChange={e => setAddCount(e.target.value.replace(/[^0-9]/g, ""))}
-          aria-label="Number of tables to add"
-          title="Number of tables"
-        />
-        <button
-          className="btn iconBtn"
-          onClick={() => {
-            const n = Number(addCount || "1");
-            dispatch({ type: "ADD_TABLES", count: n });
-            toast(`Added ${Math.max(1, Math.min(50, Math.floor(n || 1)))} table(s).`);
-          }}
-          title="Add tables"
-          aria-label="Add tables"
-        >
-          +
+        <button className="btn" onClick={() => openPrintView(state)} title="Print seating">
+          Print
         </button>
 
         <button className="btn iconBtn" onClick={() => dispatch({ type: "UNDO" })} disabled={!canUndo} title="Undo">↶</button>
@@ -88,8 +50,6 @@ export function TopBar({
 
         <button className="btn" onClick={exportJson}>Export</button>
         <button className="btn" onClick={importJson}>Import</button>
-
-        <button className="btn" onClick={() => printPods(state)} title="Print table assignments">Print</button>
 
         <span className="kbdHint">Seated: {seatedCount}</span>
       </div>

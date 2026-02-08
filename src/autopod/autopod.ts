@@ -1,383 +1,300 @@
-import { AppState, Group, Player, Table, AutoPodSummary } from "../state/model";
+import { AppState, Group, Player, Table, AutoPodSummary, UUID } from "../state/model";
 import { median, abs } from "../utils/math";
 import { emptySummary, addMove } from "./summary";
-import { stableStr, tablesSorted } from "../utils/sort";
+import { tablesSorted } from "../utils/sort";
 
-export type AutoPodMode = "nearest_bottom_up" | "random";
+/**
+ * Auto pod rules (always on):
+ * - Never moves already-seated players (only fills null seats).
+ * - Fills tables in ascending table name/number order (tablesSorted()).
+ * - Fills seats sequentially (first empty seat, then next).
+ * - "Nearest peer" is always applied, but ties/randomness happen *within* equally-good choices.
+ * - Groups are treated as atomic units when eligible (members cannot also be seated as singles).
+ * - Defensive: if state is already corrupt (same player in multiple seats), we sanitize by keeping the
+ *   first occurrence and clearing later duplicates.
+ */
+export function autoPodApply(state: AppState): { nextState: AppState; summary: AutoPodSummary } {
+  const playersById = new Map<UUID, Player>(state.players.map(p => [p.playerId, p]));
+  const groupsById = new Map<UUID, Group>(state.groups.map(g => [g.groupId, g]));
+  const catRankById = new Map<UUID, number>(state.categories.map(c => [c.categoryId, c.rank]));
 
-export function autoPodApply(
-  state: AppState,
-  opts: { mode?: AutoPodMode } = {}
-): { nextState: AppState; summary: AutoPodSummary } {
-  const mode = opts.mode ?? "nearest_bottom_up";
-  return mode === "random" ? autoPodRandom(state) : autoPodNearestBottomUp(state);
-}
+  // Work on a deep copy of sorted tables.
+  const tables: Table[] = tablesSorted(state.tables).map(t => ({ ...t, seats: [...t.seats] }));
 
-function autoPodNearestBottomUp(state: AppState): { nextState: AppState; summary: AutoPodSummary } {
-  const playersById = new Map(state.players.map(p => [p.playerId, p]));
-  const groupsById = new Map(state.groups.map(g => [g.groupId, g]));
-  const catRankById = new Map(state.categories.map(c => [c.categoryId, c.rank]));
+  // Sanitize any pre-existing corruption: a player appears in more than one seat.
+  sanitizeTablesUnique(tables);
 
-  const seated = computeSeatedPlayerIds(state.tables);
-  const groupContainsSeated = new Set<string>();
-  for (const g of state.groups) {
-    if (g.playerIds.some(pid => seated.has(pid))) groupContainsSeated.add(g.groupId);
-  }
+  const initiallySeated = computeSeatedPlayerIds(tables);
 
+  // Map each player -> group (if any). If data has duplicates, first wins.
   const playerToGroup = buildPlayerToGroup(state.groups);
 
-  const eligibleSingles: Player[] = state.players
-    .filter(p => !seated.has(p.playerId))
-    .filter(p => {
-      const gid = playerToGroup.get(p.playerId);
-      if (!gid) return true;
-      return !groupContainsSeated.has(gid);
-    });
+  // Determine which groups are eligible to be seated as groups:
+  // - all members exist
+  // - all members are currently unseated
+  // - group has 2+ members (1-member group is pointless; treat as single)
+  const eligibleGroupIds = new Set<UUID>();
+  for (const g of state.groups) {
+    if (g.playerIds.length < 2) continue;
 
-  const eligibleGroups: Group[] = state.groups
-    .filter(g => g.playerIds.length > 0)
-    .filter(g => !groupContainsSeated.has(g.groupId))
-    .filter(g => g.playerIds.every(pid => !seated.has(pid)));
+    // Must have resolvable ranks for sensible pairing; but don't block if missing category, just default.
+    const allMembersExist = g.playerIds.every(pid => playersById.has(pid));
+    if (!allMembersExist) continue;
 
-  const availablePlayerIds = new Set(eligibleSingles.map(p => p.playerId));
-  const availableGroupIds = new Set(eligibleGroups.map(g => g.groupId));
+    const anyMemberSeated = g.playerIds.some(pid => initiallySeated.has(pid));
+    if (anyMemberSeated) continue;
 
-  const tables = tablesSorted(state.tables).map(t => ({ ...t, seats: [...t.seats] }));
+    eligibleGroupIds.add(g.groupId);
+  }
+
+  // Singles are players who are unseated and NOT part of any eligible group.
+  const remainingSingles = new Set<UUID>();
+  for (const p of state.players) {
+    if (initiallySeated.has(p.playerId)) continue;
+
+    const gid = playerToGroup.get(p.playerId);
+    if (gid && eligibleGroupIds.has(gid)) {
+      // This player must be seated only via their group.
+      continue;
+    }
+    remainingSingles.add(p.playerId);
+  }
+
+  // Remaining groups
+  const remainingGroups = new Set<UUID>(eligibleGroupIds);
 
   const summary = emptySummary();
 
-  const tableTargetRank = (t: Table): number | null => {
-    const ranks: number[] = [];
+  // Helper: rank resolution
+  const rankOfPlayerId = (pid: UUID): number => {
+    const p = playersById.get(pid);
+    if (!p) return 999;
+    const r = catRankById.get(p.categoryId);
+    return typeof r === "number" ? r : 999;
+  };
+
+  const rankOfGroupId = (gid: UUID): number => {
+    const g = groupsById.get(gid);
+    if (!g) return 999;
+    // Prefer average of member ranks if possible (more accurate than group.categoryId if user mixed categories)
+    const rs = g.playerIds.map(rankOfPlayerId).filter(r => Number.isFinite(r));
+    if (rs.length) {
+      const sum = rs.reduce((a, b) => a + b, 0);
+      return sum / rs.length;
+    }
+    const r = catRankById.get(g.categoryId);
+    return typeof r === "number" ? r : 999;
+  };
+
+  const tableRanks = (t: Table): number[] => {
+    const rs: number[] = [];
     for (const pid of t.seats) {
       if (!pid) continue;
-      const p = playersById.get(pid);
-      if (!p) continue;
-      const r = catRankById.get(p.categoryId);
-      if (typeof r === "number") ranks.push(r);
+      rs.push(rankOfPlayerId(pid));
     }
-    if (ranks.length === 0) return null;
-    return median(ranks);
+    return rs;
   };
 
-  const groupRank = (g: Group): number => catRankById.get(g.categoryId) ?? 999;
-  const playerRank = (p: Player): number => catRankById.get(p.categoryId) ?? 999;
-
-  const openSeatCount = (t: Table) => t.seats.filter(s => !s).length;
-
-  const seatPlayersIntoTable = (t: Table, playerIds: string[]) => {
-    const empties: number[] = [];
-    for (let i = 0; i < t.seats.length; i++) if (!t.seats[i]) empties.push(i);
-    const seatedNow: string[] = [];
-    for (let i = 0; i < playerIds.length; i++) {
-      const idx = empties[i];
-      if (idx === undefined) break;
-      t.seats[idx] = playerIds[i];
-      seatedNow.push(playerIds[i]);
-    }
-    addMove(summary, t.tableId, seatedNow);
-  };
-
-  const removeGroupFromAvailable = (gid: string) => {
-    const g = groupsById.get(gid);
-    if (!g) return;
-    availableGroupIds.delete(gid);
-    for (const pid of g.playerIds) availablePlayerIds.delete(pid);
-  };
-  const removePlayerFromAvailable = (pid: string) => {
-    availablePlayerIds.delete(pid);
-  };
-
-  const groupsStable = () =>
-    [...availableGroupIds]
-      .map(id => groupsById.get(id)!)
-      .filter(Boolean)
-      .sort((a, b) => {
-        const ra = groupRank(a);
-        const rb = groupRank(b);
-        const sa = a.playerIds.length;
-        const sb = b.playerIds.length;
-        const na = groupName(a, playersById);
-        const nb = groupName(b, playersById);
-        return (ra - rb) || (sb - sa) || stableStr(na, nb) || stableStr(a.groupId, b.groupId);
-      });
-
-  const singlesStable = () =>
-    [...availablePlayerIds]
-      .map(id => playersById.get(id)!)
-      .filter(Boolean)
-      .sort((a, b) => {
-        const ra = playerRank(a);
-        const rb = playerRank(b);
-        return (ra - rb) || stableStr(a.displayName, b.displayName) || (a.createdIndex - b.createdIndex) || stableStr(a.playerId, b.playerId);
-      });
-
-  // Step B: exact-fit groups / groups of 4 first
-  for (const t of tables) {
-    const open = openSeatCount(t);
-    if (open <= 0) continue;
-
-    const target = tableTargetRank(t);
-    const candidates = groupsStable()
-      .filter(g => g.playerIds.length === open || (g.playerIds.length === 4 && t.seats.every(s => !s) && open >= 4))
-      .map(g => ({
-        g,
-        dist: target === null ? groupRank(g) : abs(groupRank(g) - target)
-      }))
-      .sort((a, b) => {
-        return (a.dist - b.dist)
-          || (b.g.playerIds.length - a.g.playerIds.length)
-          || stableStr(groupName(a.g, playersById), groupName(b.g, playersById))
-          || stableStr(a.g.groupId, b.g.groupId);
-      });
-
-    const pick = candidates[0]?.g;
-    if (pick) {
-      seatPlayersIntoTable(t, [...pick.playerIds]);
-      removeGroupFromAvailable(pick.groupId);
-    }
-  }
-
-  // Step C: pair 2+2
-  for (const t of tables) {
-    if (!t.seats.every(s => !s)) continue;
-    if (openSeatCount(t) < 4) continue;
-
-    const twos = groupsStable().filter(g => g.playerIds.length === 2);
-    if (twos.length < 2) continue;
-
-    const g1 = twos[0];
-    const r1 = groupRank(g1);
-    const g2 = twos
-      .slice(1)
-      .map(g => ({ g, dist: abs(groupRank(g) - r1) }))
-      .sort((a, b) =>
-        (a.dist - b.dist)
-        || stableStr(groupName(a.g, playersById), groupName(b.g, playersById))
-        || stableStr(a.g.groupId, b.g.groupId)
-      )[0]?.g;
-
-    if (!g2) continue;
-
-    seatPlayersIntoTable(t, [...g1.playerIds, ...g2.playerIds]);
-    removeGroupFromAvailable(g1.groupId);
-    removeGroupFromAvailable(g2.groupId);
-  }
-
-  // Step D: groups of 3
-  for (const t of tables) {
-    const open = openSeatCount(t);
-    if (open < 3) continue;
-
-    const target = tableTargetRank(t);
-    const candidates = groupsStable()
-      .filter(g => g.playerIds.length === 3 && g.playerIds.length <= open)
-      .map(g => ({ g, dist: target === null ? groupRank(g) : abs(groupRank(g) - target) }))
-      .sort((a, b) =>
-        (a.dist - b.dist)
-        || stableStr(groupName(a.g, playersById), groupName(b.g, playersById))
-        || stableStr(a.g.groupId, b.g.groupId)
-      );
-
-    const pick = candidates[0]?.g;
-    if (pick) {
-      seatPlayersIntoTable(t, [...pick.playerIds]);
-      removeGroupFromAvailable(pick.groupId);
-    }
-  }
-
-  // Step E: fill remaining seats
-  for (const t of tables) {
-    while (openSeatCount(t) > 0) {
-      const open = openSeatCount(t);
-      const target = tableTargetRank(t);
-
-      const groupFits = groupsStable().filter(g => g.playerIds.length <= open);
-      const singles = singlesStable();
-
-      type Cand =
-        | { kind: "single"; player: Player; dist: number; waste: number }
-        | { kind: "group"; group: Group; dist: number; waste: number };
-
-      const cands: Cand[] = [];
-
-      for (const p of singles) {
-        const dist = target === null ? playerRank(p) : abs(playerRank(p) - target);
-        cands.push({ kind: "single", player: p, dist, waste: open - 1 });
-      }
-      for (const g of groupFits) {
-        const dist = target === null ? groupRank(g) : abs(groupRank(g) - target);
-        const waste = open - g.playerIds.length;
-        cands.push({ kind: "group", group: g, dist, waste });
-      }
-
-      if (cands.length === 0) break;
-
-      cands.sort((a, b) => {
-        const d = a.dist - b.dist;
-        if (d) return d;
-
-        const w = a.waste - b.waste;
-        if (w) return w;
-
-        const sa = a.kind === "group" ? a.group.playerIds.length : 1;
-        const sb = b.kind === "group" ? b.group.playerIds.length : 1;
-        const s = sb - sa;
-        if (s) return s;
-
-        const na = a.kind === "group" ? groupName(a.group, playersById) : a.player.displayName;
-        const nb = b.kind === "group" ? groupName(b.group, playersById) : b.player.displayName;
-        const n = stableStr(na, nb);
-        if (n) return n;
-
-        const ida = a.kind === "group" ? a.group.groupId : a.player.playerId;
-        const idb = b.kind === "group" ? b.group.groupId : b.player.playerId;
-        return stableStr(ida, idb);
-      });
-
-      const pick = cands[0];
-      if (pick.kind === "single") {
-        seatPlayersIntoTable(t, [pick.player.playerId]);
-        removePlayerFromAvailable(pick.player.playerId);
-      } else {
-        seatPlayersIntoTable(t, [...pick.group.playerIds]);
-        removeGroupFromAvailable(pick.group.groupId);
-      }
-    }
-  }
-
-  const nextState: AppState = {
-    ...state,
-    tables: state.tables.map(orig => {
-      const updated = tables.find(t => t.tableId === orig.tableId);
-      return updated ? { ...orig, seats: [...updated.seats], seatCount: updated.seatCount } : orig;
-    })
-  };
-
-  return { nextState, summary };
-}
-
-function autoPodRandom(state: AppState): { nextState: AppState; summary: AutoPodSummary } {
-  const playersById = new Map(state.players.map(p => [p.playerId, p]));
-  const groupsById = new Map(state.groups.map(g => [g.groupId, g]));
-
-  const seated = computeSeatedPlayerIds(state.tables);
-  const groupContainsSeated = new Set<string>();
-  for (const g of state.groups) {
-    if (g.playerIds.some(pid => seated.has(pid))) groupContainsSeated.add(g.groupId);
-  }
-
-  const playerToGroup = buildPlayerToGroup(state.groups);
-
-  // Eligible = unseated singles not in a "locked" (contains seated) group + groups with no seated members.
-  const eligibleSingles: Player[] = state.players
-    .filter(p => !seated.has(p.playerId))
-    .filter(p => {
-      const gid = playerToGroup.get(p.playerId);
-      if (!gid) return true;
-      return !groupContainsSeated.has(gid);
-    });
-
-  const eligibleGroups: Group[] = state.groups
-    .filter(g => g.playerIds.length > 0)
-    .filter(g => !groupContainsSeated.has(g.groupId))
-    .filter(g => g.playerIds.every(pid => !seated.has(pid)));
-
-  const availablePlayerIds = new Set(eligibleSingles.map(p => p.playerId));
-  const availableGroupIds = new Set(eligibleGroups.map(g => g.groupId));
-
-  const tables = tablesSorted(state.tables).map(t => ({ ...t, seats: [...t.seats] }));
-  const summary = emptySummary();
-
-  const openSeatIndexes = (t: Table) => {
+  const openSeatIndexes = (t: Table): number[] => {
     const idxs: number[] = [];
     for (let i = 0; i < t.seats.length; i++) if (!t.seats[i]) idxs.push(i);
     return idxs;
   };
 
-  const seatPlayersIntoTable = (t: Table, playerIds: string[]) => {
-    const open = openSeatIndexes(t);
-    const seatedNow: string[] = [];
-    for (let i = 0; i < playerIds.length; i++) {
-      const idx = open[i];
-      if (idx === undefined) break;
-      t.seats[idx] = playerIds[i];
-      seatedNow.push(playerIds[i]);
+  const lowestAvailableRank = (): number | null => {
+    let best: number | null = null;
+    for (const pid of remainingSingles) {
+      const r = rankOfPlayerId(pid);
+      if (best === null || r < best) best = r;
     }
-    addMove(summary, t.tableId, seatedNow);
+    for (const gid of remainingGroups) {
+      const r = rankOfGroupId(gid);
+      if (best === null || r < best) best = r;
+    }
+    return best;
   };
 
-  const removeGroup = (gid: string) => {
-    const g = groupsById.get(gid);
-    if (!g) return;
-    availableGroupIds.delete(gid);
-    for (const pid of g.playerIds) availablePlayerIds.delete(pid);
+  type Unit =
+    | { kind: "single"; pid: UUID; size: 1; unitRank: number; memberRanks: number[] }
+    | { kind: "group"; gid: UUID; size: number; unitRank: number; memberRanks: number[] };
+
+  const listCandidateUnits = (open: number): Unit[] => {
+    const units: Unit[] = [];
+    for (const pid of remainingSingles) {
+      if (open < 1) continue;
+      const r = rankOfPlayerId(pid);
+      units.push({ kind: "single", pid, size: 1, unitRank: r, memberRanks: [r] });
+    }
+    for (const gid of remainingGroups) {
+      const g = groupsById.get(gid);
+      if (!g) continue;
+      if (g.playerIds.length > open) continue;
+
+      // Safety: group should still be fully available.
+      const allMembersStillFree = g.playerIds.every(pid => remainingSingles.has(pid) || (!playerToGroup.get(pid) || playerToGroup.get(pid) === gid));
+      // The line above isn't perfect, so do a stronger check: ensure none of its members are seated anywhere.
+      // We'll rely on used set below to prevent duplicates; here we just ensure group isn't already consumed.
+      if (!allMembersStillFree) {
+        // Even if this check fails, we can still allow group selection if none of its members were seated already;
+        // but since the members of eligible groups were removed from remainingSingles initially, this should rarely happen.
+      }
+
+      const rs = g.playerIds.map(rankOfPlayerId);
+      const avg = rs.reduce((a, b) => a + b, 0) / rs.length;
+      units.push({ kind: "group", gid, size: g.playerIds.length, unitRank: avg, memberRanks: rs });
+    }
+    return units;
   };
 
-  // Shuffle tables for randomness.
-  const tableOrder = shuffle([...tables]);
+  // Tracks every player placed during this run to guarantee uniqueness.
+  const used = new Set<UUID>(initiallySeated);
 
-  // 1) Seat groups in random order where they fit.
-  const groupOrder = shuffle([...availableGroupIds].map(id => groupsById.get(id)!).filter(Boolean));
-  for (const g of groupOrder) {
-    if (!availableGroupIds.has(g.groupId)) continue;
-    const fits = tableOrder.filter(t => openSeatIndexes(t).length >= g.playerIds.length);
-    if (fits.length === 0) continue;
-    const t = fits[Math.floor(Math.random() * fits.length)];
-    seatPlayersIntoTable(t, [...g.playerIds]);
-    removeGroup(g.groupId);
-  }
+  const seatUnit = (t: Table, unit: Unit) => {
+    const empties = openSeatIndexes(t);
+    if (empties.length < unit.size) return;
 
-  // 2) Seat remaining singles randomly into remaining open seats.
-  const remainingPlayers = shuffle([...availablePlayerIds].map(id => playersById.get(id)!).filter(Boolean));
-  let pIndex = 0;
-  for (const t of tableOrder) {
-    const open = openSeatIndexes(t);
-    if (open.length === 0) continue;
-    const toSeat: string[] = [];
-    for (let i = 0; i < open.length && pIndex < remainingPlayers.length; i++) {
-      toSeat.push(remainingPlayers[pIndex].playerId);
-      pIndex += 1;
+    const seatedNow: UUID[] = [];
+
+    if (unit.kind === "single") {
+      const idx = empties[0];
+      t.seats[idx] = unit.pid;
+      seatedNow.push(unit.pid);
+      used.add(unit.pid);
+      remainingSingles.delete(unit.pid);
+    } else {
+      const g = groupsById.get(unit.gid);
+      if (!g) return;
+
+      // Shuffle members for variety, but seat into sequential empty seats.
+      const members = [...g.playerIds];
+      shuffleInPlace(members);
+
+      for (let i = 0; i < members.length; i++) {
+        const pid = members[i];
+        const seatIdx = empties[i];
+        if (seatIdx === undefined) break;
+
+        // HARD invariant: never seat a player twice.
+        if (used.has(pid)) continue;
+
+        t.seats[seatIdx] = pid;
+        seatedNow.push(pid);
+        used.add(pid);
+      }
+
+      // Remove group + members from remaining sets so they can't be reused.
+      remainingGroups.delete(unit.gid);
+      for (const pid of g.playerIds) {
+        remainingSingles.delete(pid); // in case any slipped in due to malformed state
+      }
     }
-    if (toSeat.length) seatPlayersIntoTable(t, toSeat);
+
+    if (seatedNow.length) addMove(summary, t.tableId, seatedNow);
+  };
+
+  // Core loop: fill tables in order; fill seats in order; choose best-nearest unit each time.
+  for (const t of tables) {
+    while (openSeatIndexes(t).length > 0) {
+      const empties = openSeatIndexes(t);
+      const open = empties.length;
+      if (open <= 0) break;
+
+      const currentRanks = tableRanks(t);
+      const currentMedian = currentRanks.length ? median(currentRanks) : null;
+      const baseline = currentMedian ?? lowestAvailableRank();
+      if (baseline === null) break; // nothing left to seat
+
+      // Build candidate units that fit.
+      const candidates = listCandidateUnits(open).filter(u => {
+        // Exclude anything that would seat a used player.
+        if (u.kind === "single") return !used.has(u.pid);
+        const g = groupsById.get(u.gid);
+        if (!g) return false;
+        return g.playerIds.every(pid => !used.has(pid));
+      });
+
+      if (!candidates.length) break;
+
+      // Score candidates:
+      // Primary: minimize resulting rank range (keeps pods tight)
+      // Secondary: minimize distance to baseline (nearest peer)
+      // Tertiary: minimize waste (prefer filling seats efficiently)
+      // Final: random among ties
+      const scored = candidates.map(u => {
+        const newRanks = currentRanks.concat(u.memberRanks);
+        const rMin = Math.min(...newRanks);
+        const rMax = Math.max(...newRanks);
+        const range = rMax - rMin;
+
+        const dist = abs(u.unitRank - baseline);
+
+        const waste = open - u.size;
+
+        // Weighted sum. Range dominates to avoid 1+4 when 2/3 exist.
+        const score = range * 1000 + dist * 100 + waste * 10;
+
+        return { u, range, dist, waste, score };
+      });
+
+      scored.sort((a, b) => a.score - b.score);
+
+      const bestScore = scored[0].score;
+      const best = scored.filter(x => x.score === bestScore);
+
+      const pick = best[Math.floor(Math.random() * best.length)].u;
+
+      seatUnit(t, pick);
+    }
   }
+
+  // Final safety: ensure uniqueness (should always hold). If not, sanitize.
+  sanitizeTablesUnique(tables);
 
   const nextState: AppState = {
     ...state,
-    tables: state.tables.map(orig => {
-      const updated = tables.find(t => t.tableId === orig.tableId);
-      return updated ? { ...orig, seats: [...updated.seats], seatCount: updated.seatCount } : orig;
-    })
+    tables,
+    lastAutoPodSummary: summary
   };
 
   return { nextState, summary };
 }
 
-function computeSeatedPlayerIds(tables: Table[]) {
-  const set = new Set<string>();
-  for (const t of tables) for (const s of t.seats) if (s) set.add(s);
-  return set;
+function sanitizeTablesUnique(tables: Table[]) {
+  const seen = new Set<UUID>();
+  for (const t of tables) {
+    for (let i = 0; i < t.seats.length; i++) {
+      const pid = t.seats[i];
+      if (!pid) continue;
+      if (seen.has(pid)) {
+        t.seats[i] = null;
+      } else {
+        seen.add(pid);
+      }
+    }
+  }
 }
 
-function buildPlayerToGroup(groups: Group[]) {
-  const m = new Map<string, string>();
-  for (const g of groups) for (const pid of g.playerIds) m.set(pid, g.groupId);
+function computeSeatedPlayerIds(tables: Table[]): Set<UUID> {
+  const s = new Set<UUID>();
+  for (const t of tables) for (const pid of t.seats) if (pid) s.add(pid);
+  return s;
+}
+
+function buildPlayerToGroup(groups: Group[]): Map<UUID, UUID> {
+  const m = new Map<UUID, UUID>();
+  for (const g of groups) {
+    for (const pid of g.playerIds) {
+      if (!m.has(pid)) m.set(pid, g.groupId);
+    }
+  }
   return m;
 }
 
-function groupName(g: Group, playersById: Map<string, Player>) {
-  const label = g.label?.trim();
-  if (label) return label;
-  const names = g.playerIds.map(pid => playersById.get(pid)?.displayName || "").filter(Boolean).sort(stableStr);
-  return names.join(" + ") || "Group";
-}
-
-function shuffle<T>(arr: T[]): T[] {
-  // Fisher-Yates
+function shuffleInPlace<T>(arr: T[]) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    const t = arr[i];
+    const tmp = arr[i];
     arr[i] = arr[j];
-    arr[j] = t;
+    arr[j] = tmp;
   }
-  return arr;
 }

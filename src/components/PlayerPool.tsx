@@ -46,12 +46,19 @@ export function PlayerPool({ onOpenActions }: { onOpenActions: (kind: "player" |
 
   const addPlayer = () => {
     const name = newName.trim();
-    if (!name) return toast("Enter a name.");
+    if (!name) {
+      toast("Enter a name.", { kind: "error" });
+      focusName();
+      return;
+    }
 
-    const normalized = name.replace(/\s+/g, " ").toLocaleLowerCase();
-    const exists = state.players.some(p => p.displayName.trim().replace(/\s+/g, " ").toLocaleLowerCase() === normalized);
-    if (exists) return toast("Duplicate name not allowed.", { kind: "error" });
-
+    const norm = name.replace(/\s+/g, " ").toLowerCase();
+    const dup = state.players.some(p => String(p.displayName ?? "").trim().replace(/\s+/g, " ").toLowerCase() === norm);
+    if (dup) {
+      toast("Duplicate name not allowed.", { kind: "error" });
+      focusName();
+      return;
+    }
     dispatch({ type: "ADD_PLAYER", displayName: name, categoryId: newCat });
     setNewName("");
     focusName();
@@ -67,9 +74,6 @@ export function PlayerPool({ onOpenActions }: { onOpenActions: (kind: "player" |
     <>
       <div className="sectionHeader">
         <h3>Pool</h3>
-        <div className="btnRow">
-          <button className="btn iconBtn" onClick={addEmptyGroup} title="Add empty group">+</button>
-        </div>
       </div>
 
       <div className="poolInner">
@@ -96,7 +100,10 @@ export function PlayerPool({ onOpenActions }: { onOpenActions: (kind: "player" |
           <div className="groupBox" ref={poolRef} style={{ outline: poolOver ? "2px solid rgba(34,197,94,.65)" : "none" }}>
             <div className="groupTop">
               <div className="groupTitle"><span>Groups</span></div>
-              <div className="kbdHint">Drop here to unseat / ungroup</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button className="btn iconBtn" onClick={addEmptyGroup} title="Create group" aria-label="Create group">+</button>
+                <div className="kbdHint">Drop here to unseat / ungroup</div>
+              </div>
             </div>
 
             <div className="groupMembers" style={{ flexDirection: "column", gap: 8 }}>
