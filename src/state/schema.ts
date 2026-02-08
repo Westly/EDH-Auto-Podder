@@ -12,6 +12,7 @@ export const zPlayer = z.object({
   playerId: z.string(),
   displayName: z.string(),
   categoryId: z.string(),
+  present: z.boolean().optional(),
   locked: z.boolean().optional(),
   createdIndex: z.number().int()
 });

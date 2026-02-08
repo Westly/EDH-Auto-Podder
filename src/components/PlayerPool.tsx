@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { useAppState } from "../state/StateProvider";
-import { groupDropId, poolDropId, playerDropIdWithToken } from "../dnd/dndUtils";
+import { groupDropId, poolDropId, readyDropId, notPresentDropId, playerDropIdWithToken } from "../dnd/dndUtils";
 import { groupsSorted, playersSorted, groupFallbackName } from "../utils/sort";
 import { CategorySelect } from "./CategorySelect";
 import { GroupShell, PlayerChip } from "./chips";
@@ -26,12 +26,21 @@ export function PlayerPool({ onOpenActions }: { onOpenActions: (kind: "player" |
   }, [state.groups]);
 
   const groups = useMemo(() => groupsSorted(state.groups, playersById, catsById), [state.groups, playersById, catsById]);
-  const individuals = useMemo(() => {
+  const readyPlayers = useMemo(() => {
     const ungrouped = state.players.filter(p => !playerToGroup.has(p.playerId));
-    return playersSorted(ungrouped, catsById);
+    const ready = ungrouped.filter(p => p.present !== false);
+    return playersSorted(ready, catsById);
+  }, [state.players, playerToGroup, catsById]);
+
+  const notPresentPlayers = useMemo(() => {
+    const ungrouped = state.players.filter(p => !playerToGroup.has(p.playerId));
+    const np = ungrouped.filter(p => p.present === false);
+    return playersSorted(np, catsById);
   }, [state.players, playerToGroup, catsById]);
 
   const { setNodeRef: poolRef, isOver: poolOver } = useDroppable({ id: poolDropId() });
+  const { setNodeRef: readyRef, isOver: readyOver } = useDroppable({ id: readyDropId() });
+  const { setNodeRef: notPresentRef, isOver: notPresentOver } = useDroppable({ id: notPresentDropId() });
 
   const [newName, setNewName] = useState("");
   const [newCat, setNewCat] = useState(state.categories.find(c => c.rank === 3)?.categoryId ?? state.categories[0]?.categoryId ?? "");
@@ -114,15 +123,15 @@ export function PlayerPool({ onOpenActions }: { onOpenActions: (kind: "player" |
             </div>
           </div>
 
-          <div className="groupBox">
+          <div className="groupBox" ref={readyRef} style={{ outline: readyOver ? "2px solid rgba(59,130,246,.65)" : "none" }}>
             <div className="groupTop">
-              <div className="groupTitle"><span>Individuals</span></div>
-              <div className="kbdHint">Drag to seats</div>
+              <div className="groupTitle"><span>Ready to Play</span></div>
+              <div className="kbdHint">Drag to seats • Drop here to mark Ready</div>
             </div>
 
             <div className="groupMembers">
-              {individuals.length === 0 ? <div className="kbdHint">No ungrouped players.</div> : null}
-              {individuals.map(p => {
+              {readyPlayers.length === 0 ? <div className="kbdHint">No ready players.</div> : null}
+              {readyPlayers.map(p => {
                 const cat = catsById.get(p.categoryId);
                 const seated = seatedPlayerIds.has(p.playerId);
                 return (
@@ -133,6 +142,31 @@ export function PlayerPool({ onOpenActions }: { onOpenActions: (kind: "player" |
                     name={p.displayName}
                     color={cat?.color ?? "#999"}
                     sub={seated ? "S" : undefined}
+                    onClick={() => onOpenActions("player", p.playerId)}
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="groupBox" ref={notPresentRef} style={{ outline: notPresentOver ? "2px solid rgba(239,68,68,.65)" : "none" }}>
+            <div className="groupTop">
+              <div className="groupTitle"><span>Not Present</span></div>
+              <div className="kbdHint">Not eligible for seating/autopod</div>
+            </div>
+
+            <div className="groupMembers">
+              {notPresentPlayers.length === 0 ? <div className="kbdHint">No one in holding.</div> : null}
+              {notPresentPlayers.map(p => {
+                const cat = catsById.get(p.categoryId);
+                return (
+                  <PlayerChip
+                    key={p.playerId}
+                    dragId={`player:${p.playerId}`}
+                    dropId={playerDropIdWithToken(p.playerId, "notpresent")}
+                    name={p.displayName}
+                    color={cat?.color ?? "#999"}
+                    sub="NP"
                     onClick={() => onOpenActions("player", p.playerId)}
                   />
                 );

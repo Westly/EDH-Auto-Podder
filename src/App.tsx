@@ -24,7 +24,7 @@ export default function App() {
         <div className="brand">
           <div className="brandMark">EDH</div>
           <div className="brandText">
-            <div className="brandTitle">Auto Podder</div>
+            <div className="brandTitle">EDH Auto Podder</div>
             <div className="brandSub">Commander pod organizer</div>
           </div>
         </div>

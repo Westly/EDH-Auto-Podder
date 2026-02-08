@@ -4,12 +4,13 @@ import { downloadText } from "../utils/download";
 import { zAppState } from "../state/schema";
 import { toast } from "./Toasts";
 import { openPrintView } from "../utils/print";
+import { FaUndo, FaRedo, FaPrint, FaFileExport, FaFileImport, MdMagicWand } from "./Icons";
 
 export function TopBar({ onAutoPod, seatedCount }: { onAutoPod: () => void; seatedCount: number }) {
   const { state, dispatch, canUndo, canRedo } = useAppState();
 
   const exportJson = () => {
-    const file = `fnm_podder_export_${new Date().toISOString().slice(0, 10)}.json`;
+    const file = `edh_auto_podder_export_${new Date().toISOString().slice(0, 10)}.json`;
     downloadText(file, JSON.stringify(state, null, 2));
     toast("Exported.");
   };
@@ -37,19 +38,51 @@ export function TopBar({ onAutoPod, seatedCount }: { onAutoPod: () => void; seat
 
   return (
     <div className="sectionHeader" style={{ borderRadius: 14 }}>
-      <h3>FNM Podder</h3>
+      <h3>EDH Auto Podder</h3>
       <div className="btnRow">
-        <button className="btn btnPrimary" onClick={onAutoPod}>Auto</button>
-
-        <button className="btn" onClick={() => openPrintView(state)} title="Print seating">
-          Print
+        {/* Only top-bar button with text */}
+        <button className="btn btnPrimary btnWithIcon" onClick={onAutoPod} title="Auto Pod">
+          <MdMagicWand className="iconSvg" />
+          <span>Auto Pod</span>
         </button>
 
-        <button className="btn iconBtn" onClick={() => dispatch({ type: "UNDO" })} disabled={!canUndo} title="Undo">↶</button>
-        <button className="btn iconBtn" onClick={() => dispatch({ type: "REDO" })} disabled={!canRedo} title="Redo">↷</button>
+        {/* Icon buttons with tooltips */}
+        <button
+          className="btn iconBtn"
+          onClick={() => openPrintView(state)}
+          title="Print seating"
+          aria-label="Print seating"
+        >
+          <FaPrint className="iconSvg" />
+        </button>
 
-        <button className="btn" onClick={exportJson}>Export</button>
-        <button className="btn" onClick={importJson}>Import</button>
+        <button
+          className="btn iconBtn"
+          onClick={() => dispatch({ type: "UNDO" })}
+          disabled={!canUndo}
+          title="Undo"
+          aria-label="Undo"
+        >
+          <FaUndo className="iconSvg" />
+        </button>
+
+        <button
+          className="btn iconBtn"
+          onClick={() => dispatch({ type: "REDO" })}
+          disabled={!canRedo}
+          title="Redo"
+          aria-label="Redo"
+        >
+          <FaRedo className="iconSvg" />
+        </button>
+
+        <button className="btn iconBtn" onClick={exportJson} title="Export" aria-label="Export">
+          <FaFileExport className="iconSvg" />
+        </button>
+
+        <button className="btn iconBtn" onClick={importJson} title="Import" aria-label="Import">
+          <FaFileImport className="iconSvg" />
+        </button>
 
         <span className="kbdHint">Seated: {seatedCount}</span>
       </div>

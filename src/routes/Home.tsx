@@ -18,6 +18,8 @@ import { useAppState } from "../state/StateProvider";
 import {
   isSeatDropId,
   isPoolDropId,
+  isReadyDropId,
+  isNotPresentDropId,
   isGroupDropId,
   isTableDropId,
   isPlayerDropId,
@@ -60,7 +62,23 @@ export default function Home() {
     if (activeId.startsWith("player:")) {
       const playerId = activeId.replace("player:", "");
 
+      // Dropping into pool sections toggles presence.
+      if (isReadyDropId(overId)) {
+        dispatch({ type: "SET_PLAYER_PRESENT", playerId, present: true });
+        return;
+      }
+      if (isNotPresentDropId(overId)) {
+        dispatch({ type: "SET_PLAYER_PRESENT", playerId, present: false });
+        toast("Marked Not Present.");
+        return;
+      }
+
       if (isSeatDropId(overId)) {
+        const p = state.players.find(pp => pp.playerId === playerId);
+        if (p && p.present === false) {
+          toast("Can't seat: player is Not Present.", { kind: "error" });
+          return;
+        }
         const { tableId, seatIndex } = parseSeatDropId(overId);
         dispatch({ type: "ASSIGN_PLAYER_TO_SEAT", tableId, seatIndex, playerId });
         return;
@@ -71,6 +89,11 @@ export default function Home() {
         return;
       }
       if (isGroupDropId(overId)) {
+        const p = state.players.find(pp => pp.playerId === playerId);
+        if (p && p.present === false) {
+          toast("Can't group: player is Not Present.", { kind: "error" });
+          return;
+        }
         const groupId = overId.replace("groupdrop:", "");
         dispatch({ type: "ADD_PLAYER_TO_GROUP", groupId, playerId });
         return;
@@ -85,11 +108,25 @@ export default function Home() {
     if (activeId.startsWith("groupmember:")) {
       const parts = activeId.replace("groupmember:", "").split(":");
       const playerId = parts[1];
+      if (isReadyDropId(overId)) {
+        dispatch({ type: "SET_PLAYER_PRESENT", playerId, present: true });
+        return;
+      }
+      if (isNotPresentDropId(overId)) {
+        dispatch({ type: "SET_PLAYER_PRESENT", playerId, present: false });
+        toast("Marked Not Present.");
+        return;
+      }
       if (isPoolDropId(overId)) {
         dispatch({ type: "REMOVE_PLAYER_FROM_GROUP", playerId });
         return;
       }
       if (isSeatDropId(overId)) {
+        const p = state.players.find(pp => pp.playerId === playerId);
+        if (p && p.present === false) {
+          toast("Can't seat: player is Not Present.", { kind: "error" });
+          return;
+        }
         const { tableId, seatIndex } = parseSeatDropId(overId);
         dispatch({ type: "ASSIGN_PLAYER_TO_SEAT", tableId, seatIndex, playerId });
         return;

@@ -50,6 +50,33 @@ export function ActionModal({
                 <div className="kbdHint">Keyboard fallback: use this modal to assign/unassign.</div>
               </div>
 
+              <div className="notice" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <b>Status:</b>
+                <span className="kbdHint">{player.present === false ? "Not Present" : "Ready to Play"}</span>
+                <div style={{ flex: 1 }} />
+                {player.present === false ? (
+                  <button
+                    className="btn btnPrimary"
+                    onClick={() => {
+                      dispatch({ type: "SET_PLAYER_PRESENT", playerId: player.playerId, present: true });
+                      toast("Marked Ready to Play.");
+                    }}
+                  >
+                    Mark Ready
+                  </button>
+                ) : (
+                  <button
+                    className="btn btnDanger"
+                    onClick={() => {
+                      dispatch({ type: "SET_PLAYER_PRESENT", playerId: player.playerId, present: false });
+                      toast("Marked Not Present.");
+                    }}
+                  >
+                    Mark Not Present
+                  </button>
+                )}
+              </div>
+
               <div className="formRow">
                 <label className="kbdHint">Category</label>
                 <CategorySelect
@@ -102,7 +129,7 @@ export function ActionModal({
                 </div>
               </div>
 
-              <AssignToSeatPicker playerId={player.playerId} />
+              <AssignToSeatPicker playerId={player.playerId} disabled={player.present === false} />
             </>
           ) : null}
 
@@ -159,18 +186,23 @@ export function ActionModal({
   );
 }
 
-function AssignToSeatPicker({ playerId }: { playerId: string }) {
+function AssignToSeatPicker({ playerId, disabled }: { playerId: string; disabled?: boolean }) {
   const { state, dispatch } = useAppState();
   const [tableId, setTableId] = useState(state.tables[0]?.tableId ?? "");
   const [seatIndex, setSeatIndex] = useState(0);
 
   const table = state.tables.find(t => t.tableId === tableId);
 
-  const canAssign = table ? table.seats[seatIndex] == null : false;
+  const canAssign = !disabled && (table ? table.seats[seatIndex] == null : false);
 
   return (
     <div className="notice">
       <b>Assign to seat</b> (keyboard fallback)
+      {disabled ? (
+        <div className="kbdHint" style={{ marginTop: 6 }}>
+          This player is marked <b>Not Present</b> and cannot be seated.
+        </div>
+      ) : null}
       {state.tables.length === 0 ? (
         <div className="kbdHint" style={{ marginTop: 6 }}>
           No tables available.

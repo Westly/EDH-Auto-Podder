@@ -26,6 +26,11 @@ export function autoPodApply(state: AppState): { nextState: AppState; summary: A
 
   const initiallySeated = computeSeatedPlayerIds(tables);
 
+  const isPresent = (pid: UUID): boolean => {
+    const p = playersById.get(pid);
+    return !!p && p.present !== false;
+  };
+
   // Map each player -> group (if any). If data has duplicates, first wins.
   const playerToGroup = buildPlayerToGroup(state.groups);
 
@@ -41,6 +46,10 @@ export function autoPodApply(state: AppState): { nextState: AppState; summary: A
     const allMembersExist = g.playerIds.every(pid => playersById.has(pid));
     if (!allMembersExist) continue;
 
+    // All members must be marked present (Not Present players are never eligible).
+    const allMembersPresent = g.playerIds.every(pid => isPresent(pid));
+    if (!allMembersPresent) continue;
+
     const anyMemberSeated = g.playerIds.some(pid => initiallySeated.has(pid));
     if (anyMemberSeated) continue;
 
@@ -51,6 +60,9 @@ export function autoPodApply(state: AppState): { nextState: AppState; summary: A
   const remainingSingles = new Set<UUID>();
   for (const p of state.players) {
     if (initiallySeated.has(p.playerId)) continue;
+
+    // Not Present players are never eligible.
+    if (p.present === false) continue;
 
     const gid = playerToGroup.get(p.playerId);
     if (gid && eligibleGroupIds.has(gid)) {

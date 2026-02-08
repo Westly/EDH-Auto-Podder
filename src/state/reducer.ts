@@ -17,6 +17,7 @@ export type Action =
   | { type: "ADD_PLAYER"; displayName: string; categoryId: string }
   | { type: "REMOVE_PLAYER"; playerId: string }
   | { type: "SET_PLAYER_CATEGORY"; playerId: string; categoryId: string }
+  | { type: "SET_PLAYER_PRESENT"; playerId: string; present: boolean }
   | { type: "SET_GROUP_CATEGORY"; groupId: string; categoryId: string }
   | { type: "ADD_EMPTY_GROUP"; categoryId: string }
   | { type: "RENAME_GROUP"; groupId: string; label: string }
@@ -88,6 +89,11 @@ export function appReducer(state: AppState, action: Action): AppState {
     }
 
     case "ASSIGN_PLAYER_TO_SEAT": {
+      const p = state.players.find(pp => pp.playerId === action.playerId);
+      if (p && p.present === false) {
+        toast("Player is marked Not Present.", { kind: "error" });
+        return state;
+      }
       const table = state.tables.find(t => t.tableId === action.tableId);
       if (!table) return state;
       if (table.seats[action.seatIndex]) {
@@ -132,6 +138,7 @@ export function appReducer(state: AppState, action: Action): AppState {
         playerId: uuid(),
         displayName: name,
         categoryId: action.categoryId,
+        present: true,
         createdIndex: ci
       };
       return { ...state, counters: { createdIndex: ci }, players: [...state.players, next] };
@@ -147,6 +154,24 @@ export function appReducer(state: AppState, action: Action): AppState {
 
     case "SET_PLAYER_CATEGORY": {
       return { ...state, players: state.players.map(p => (p.playerId === action.playerId ? { ...p, categoryId: action.categoryId } : p)) };
+    }
+
+    case "SET_PLAYER_PRESENT": {
+      // If marking not-present, force them out of seats and groups.
+      const present = !!action.present;
+      const players = state.players.map(p => (p.playerId === action.playerId ? { ...p, present } : p));
+
+      if (present) {
+        return { ...state, players };
+      }
+
+      // Unseat and ungroup when moving to Not Present.
+      const tables = state.tables.map(t => ({ ...t, seats: t.seats.map(pid => (pid === action.playerId ? null : pid)) }));
+      const groups = state.groups
+        .map(g => ({ ...g, playerIds: g.playerIds.filter(id => id !== action.playerId) }))
+        .filter(g => g.playerIds.length > 0);
+
+      return { ...state, players, tables, groups };
     }
 
     case "SET_GROUP_CATEGORY": {
@@ -175,6 +200,11 @@ export function appReducer(state: AppState, action: Action): AppState {
 
     // Drag a player onto a group box
     case "ADD_PLAYER_TO_GROUP": {
+      const p = state.players.find(pp => pp.playerId === action.playerId);
+      if (p && p.present === false) {
+        toast("Can't group: player is Not Present.", { kind: "error" });
+        return state;
+      }
       const existing = findGroupIdForPlayer(state.groups, action.playerId);
       if (existing) {
         toast("Player already grouped.");
@@ -194,6 +224,13 @@ export function appReducer(state: AppState, action: Action): AppState {
       const a = action.aPlayerId;
       const b = action.bPlayerId;
       if (a === b) return state;
+
+      const pa = state.players.find(pp => pp.playerId === a);
+      const pb = state.players.find(pp => pp.playerId === b);
+      if ((pa && pa.present === false) || (pb && pb.present === false)) {
+        toast("Can't group: a player is Not Present.", { kind: "error" });
+        return state;
+      }
 
       const ga = findGroupIdForPlayer(state.groups, a);
       const gb = findGroupIdForPlayer(state.groups, b);

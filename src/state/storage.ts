@@ -17,7 +17,9 @@ export function loadState(): AppState | null {
     };
     const migrated = {
       ...val.data,
-      categories: val.data.categories.map(c => (namesByRank[c.rank] ? { ...c, name: namesByRank[c.rank] } : c))
+      categories: val.data.categories.map(c => (namesByRank[c.rank] ? { ...c, name: namesByRank[c.rank] } : c)),
+      // Presence flag is optional for backward compatibility; default to present/ready.
+      players: val.data.players.map(p => ({ ...p, present: p.present ?? true }))
     };
     return migrated;
   } catch {

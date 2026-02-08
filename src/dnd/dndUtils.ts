@@ -16,6 +16,20 @@ export function isPoolDropId(id: string) {
   return id === "pooldrop:pool";
 }
 
+export function readyDropId() {
+  return "pooldrop:ready";
+}
+export function isReadyDropId(id: string) {
+  return id === "pooldrop:ready";
+}
+
+export function notPresentDropId() {
+  return "pooldrop:notpresent";
+}
+export function isNotPresentDropId(id: string) {
+  return id === "pooldrop:notpresent";
+}
+
 export function groupDropId(groupId: string) {
   return `groupdrop:${groupId}`;
 }

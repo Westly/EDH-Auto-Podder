@@ -12,6 +12,12 @@ export type Player = {
   playerId: UUID;
   displayName: string;
   categoryId: UUID;
+  /**
+   * Presence status in the player pool.
+   * - true/undefined: "Ready to Play" (eligible for seating/autopod)
+   * - false: "Not Present" (excluded from seating/autopod; still kept for stats/name validation)
+   */
+  present?: boolean;
   locked?: boolean;
   createdIndex: number;
 };
